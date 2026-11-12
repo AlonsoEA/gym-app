@@ -262,3 +262,57 @@ h2 { font-size: 18px; margin: 26px 0 10px; }
 .stack > .field-label + .text-input { margin-top: 10px; }
 .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; margin: 26px 0 14px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+/* ---------- Progreso ---------- */
+.ex-title { display: flex; align-items: center; gap: 6px; text-align: left; min-width: 0; }
+.ex-title .chev { color: var(--muted); font-size: 20px; line-height: 1; }
+.ex-link { text-align: left; font-weight: 500; }
+.ex-link .sub { display: block; color: var(--accent); font-size: 12px; font-weight: 600; margin-top: 1px; }
+.list-item .sub { display: block; }
+.setting .sub { color: var(--muted); font-size: 12px; }
+.eyebrow-s { color: var(--accent); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0 14px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-width: 0; }
+.tile span { display: block; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.tile b { display: block; font-size: 16px; margin: 3px 0 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile em { display: block; font-style: normal; color: var(--muted); font-size: 11px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 3px; margin-bottom: 10px; }
+.seg button { padding: 8px; border-radius: 8px; font-weight: 600; font-size: 14px; color: var(--muted); }
+.seg button.on { background: var(--surface-2); color: var(--text); }
+.chart-readout { font-size: 15px; min-height: 22px; margin: 4px 2px; }
+.chart { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .pt { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.chart .pt.rec { fill: #ffd34d; }
+.chart .pt.sel { r: 7; stroke: var(--text); }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart-empty { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 22px 14px; text-align: center; }
+.hist-row { padding: 9px 0; border-top: 1px solid var(--border); }
+.hist-row:first-child { border-top: 0; }
+.pr { font-size: 12px; font-weight: 700; color: #ffd34d; }
+
+/* ---------- Temporizador de descanso ---------- */
+.rest {
+  position: fixed; left: 12px; right: 12px; z-index: 45;
+  bottom: calc(var(--safe-bottom) + 72px);
+  max-width: 536px; margin: 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 16px;
+  padding: 8px 8px 8px 14px; overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0,0,0,.5);
+}
+.rest-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(198,244,50,.12); transition: width .25s linear; pointer-events: none; }
+.rest-info { flex: 1; position: relative; display: flex; align-items: baseline; gap: 8px; }
+.rest-info span { color: var(--muted); font-size: 13px; font-weight: 600; }
+.rest-info b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.rest button { position: relative; height: 38px; min-width: 44px; padding: 0 8px; border-radius: 10px; background: var(--surface); font-weight: 700; font-size: 14px; }
+.rest.finished { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.rest.finished .rest-info span { color: var(--accent-ink); }
+.rest.finished .rest-info b { font-size: 18px; }
+.rest.finished button { background: rgba(0,0,0,.12); color: var(--accent-ink); }
+.rest.finished .rest-fill { display: none; }
+.toast { bottom: calc(var(--safe-bottom) + 140px); }
+main { padding-bottom: calc(var(--safe-bottom) + 160px); }
+.toast { left: 16px; right: 16px; transform: none; width: fit-content; max-width: calc(100vw - 32px); margin: 0 auto; }

@@ -41,6 +41,14 @@
     <div class="sheet" id="sheet-body"></div>
   </div>
 
+  <div id="rest" class="rest" hidden>
+    <div class="rest-fill" id="rest-fill"></div>
+    <div class="rest-info"><span>Descanso</span><b id="rest-time">1:30</b></div>
+    <button data-act="rest-add" data-d="-15">−15</button>
+    <button data-act="rest-add" data-d="15">+15</button>
+    <button data-act="rest-stop" aria-label="Cerrar temporizador">✕</button>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script type="module" src="app.js"></script>

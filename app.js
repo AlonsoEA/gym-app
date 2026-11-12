@@ -25,7 +25,7 @@ function freshData() {
     groups: DEFAULT_GROUPS.map((name) => ({ id: uid(), name })),
     exercises: [],          // { id, groupId, name, archived }
     workouts: {},           // 'YYYY-MM-DD' -> { groups: [groupId], entries: [{ id, exerciseId, sets: [{ w, r, done }] }] }
-    settings: { defaultSets: 4, weightStep: 2.5 },
+    settings: { defaultSets: 4, weightStep: 2.5, restSeconds: 90 },
   };
 }
 
@@ -307,7 +307,7 @@ function renderEntry(k, e) {
   return `
     <div class="card" data-entry="${e.id}">
       <div class="card-head">
-        <h3>${esc(ex ? ex.name : 'Ejercicio eliminado')}</h3>
+        <button class="ex-title" data-act="progress" data-ex="${e.exerciseId}"><h3>${esc(ex ? ex.name : 'Ejercicio eliminado')}</h3><span class="chev">›</span></button>
         <button class="icon-btn" data-act="remove-entry" aria-label="Quitar ejercicio">×</button>
       </div>
       <div class="last">${lastLine}</div>
@@ -414,7 +414,7 @@ function renderExercises() {
         <div class="list">
           ${list.map((e) => `
             <div class="list-item">
-              <div class="grow">${esc(e.name)}</div>
+              <button class="grow ex-link" data-act="progress" data-ex="${e.id}">${esc(e.name)}<span class="sub">Ver progreso ›</span></button>
               <button class="icon-btn" data-act="rename-ex" data-ex="${e.id}" aria-label="Renombrar">✎</button>
               <button class="icon-btn" data-act="delete-ex" data-ex="${e.id}" aria-label="Eliminar">🗑</button>
             </div>`).join('')}
@@ -458,6 +458,14 @@ function renderSettings() {
           <button data-act="setting-step" data-key="weightStep" data-d="1">+</button>
         </div>
       </div>
+      <div class="setting">
+        <div>Descanso entre series<div class="sub">Al marcar una serie como hecha</div></div>
+        <div class="stepper">
+          <button data-act="setting-step" data-key="restSeconds" data-d="-1">−</button>
+          <input value="${data.settings.restSeconds ? fmtTime(data.settings.restSeconds) : 'No'}" readonly>
+          <button data-act="setting-step" data-key="restSeconds" data-d="1">+</button>
+        </div>
+      </div>
     </div>
 
     <h2>Copia de seguridad</h2>
@@ -476,7 +484,7 @@ function renderSettings() {
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v5</p>
+    <p class="muted small" style="text-align:center">Gym · v6</p>
   `;
 }
 
@@ -537,15 +545,15 @@ function openGroupEditor(k) {
 /* ---------------- Utilidades ---------------- */
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 2200) {
   const t = $('#toast');
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+  toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
-function vibrate(ms = 10) { if (navigator.vibrate) navigator.vibrate(ms); }
+function vibrate(ms = 10) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
 function ctx(el) {
   const dateEl = el.closest('[data-date]');
@@ -645,7 +653,23 @@ const actions = {
     s.done = !s.done;
     setEl.classList.toggle('done', s.done);
     save(); vibrate(s.done ? 20 : 10);
+    if (s.done) {
+      unlockAudio();
+      startRest();
+      checkRecord(ctx(el).k, entry, s);
+    }
   },
+  progress(el) { openProgress(el.dataset.ex); },
+  'progress-metric'(el) { openProgress(el.dataset.ex, el.dataset.metric); },
+  'chart-pt'(el) {
+    document.querySelectorAll('.chart .pt.sel').forEach((x) => x.classList.remove('sel'));
+    const dot = el.parentNode.querySelector('.pt');
+    if (dot) dot.classList.add('sel');
+    const r = $('#chart-readout');
+    if (r) r.innerHTML = el.dataset.label;
+  },
+  'rest-add'(el) { addRest(Number(el.dataset.d)); },
+  'rest-stop'() { stopRest(); },
 
   // Calendario
   'cal-prev'() { ui.calMonth = new Date(ui.calMonth.getFullYear(), ui.calMonth.getMonth() - 1, 1); render(); },
@@ -705,6 +729,10 @@ const actions = {
       const opts = [0.5, 1, 1.25, 2, 2.5, 5];
       const i = Math.max(0, opts.indexOf(data.settings.weightStep));
       data.settings.weightStep = opts[Math.min(opts.length - 1, Math.max(0, i + d))];
+    }
+    if (key === 'restSeconds') {
+      const i = Math.max(0, REST_OPTS.indexOf(data.settings.restSeconds));
+      data.settings.restSeconds = REST_OPTS[Math.min(REST_OPTS.length - 1, Math.max(0, i + d))];
     }
     save(); render();
   },
@@ -808,12 +836,231 @@ document.addEventListener('change', async (ev) => {
 let lastSeenDay = todayKey();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') cloud.flush();
+  if (document.visibilityState === 'visible' && rest.timer) tickRest();
   if (document.visibilityState === 'visible' && todayKey() !== lastSeenDay) {
     lastSeenDay = todayKey();
     ui.calSel = lastSeenDay;
     render();
   }
 });
+
+/* ---------------- Progreso y récords ---------------- */
+
+const better = (a, b) => !b || a.w > b.w || (a.w === b.w && a.r > b.r);
+const validSet = (s) => s.w !== '' && s.r !== '' && Number(s.r) > 0;
+
+function topSet(sets) {
+  let top = null;
+  for (const s of sets) if (validSet(s) && better({ w: Number(s.w), r: Number(s.r) }, top)) top = { w: Number(s.w), r: Number(s.r) };
+  return top;
+}
+
+// Sesiones de un ejercicio, de la más antigua a la más reciente.
+function exerciseHistory(exId) {
+  const out = [];
+  let best = null;
+  for (const k of Object.keys(data.workouts).sort()) {
+    const e = data.workouts[k].entries.find((x) => x.exerciseId === exId);
+    if (!e) continue;
+    const sets = e.sets.filter(validSet).map((s) => ({ w: Number(s.w), r: Number(s.r) }));
+    if (!sets.length) continue;
+    const top = topSet(sets);
+    const record = !!best && better(top, best);
+    if (better(top, best)) best = top;
+    out.push({
+      date: k, sets, top, record,
+      volume: sets.reduce((a, s) => a + s.w * s.r, 0),
+      maxReps: Math.max(...sets.map((s) => s.r)),
+      totalReps: sets.reduce((a, s) => a + s.r, 0),
+    });
+  }
+  return out;
+}
+
+function bestBefore(exId, k) {
+  let best = null;
+  for (const d of Object.keys(data.workouts)) {
+    if (d >= k) continue;
+    const e = data.workouts[d].entries.find((x) => x.exerciseId === exId);
+    if (e) { const t = topSet(e.sets); if (t && better(t, best)) best = t; }
+  }
+  return best;
+}
+
+function checkRecord(k, entry, s) {
+  if (!validSet(s)) return;
+  const prev = bestBefore(entry.exerciseId, k);
+  if (!prev) return; // la primera vez no cuenta como récord
+  const cur = { w: Number(s.w), r: Number(s.r) };
+  const others = topSet(entry.sets.filter((x) => x !== s && x.done));
+  if (better(cur, prev) && better(cur, others)) {
+    const ex = exById(entry.exerciseId);
+    toast(`🏆 ¡Nuevo récord en ${ex ? ex.name : 'este ejercicio'}! ${fmtNum(cur.w)} kg × ${cur.r}`, 4000);
+    vibrate([30, 60, 30]);
+  }
+}
+
+function niceScale(min, max, count = 4) {
+  if (min === max) { min -= 1; max += 1; }
+  const raw = (max - min) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((st) => st >= raw);
+  const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
+  return { lo, hi, ticks };
+}
+
+function renderChart(points, unit, exId) {
+  const W = 340, H = 190, L = 40, R = 14, T = 14, B = 26;
+  const t0 = dateOf(points[0].date).getTime();
+  const t1 = dateOf(points[points.length - 1].date).getTime();
+  const vals = points.map((p) => p.v);
+  const { lo, hi, ticks } = niceScale(Math.min(...vals), Math.max(...vals));
+  const x = (d) => L + (t1 === t0 ? (W - L - R) / 2 : ((dateOf(d).getTime() - t0) / (t1 - t0)) * (W - L - R));
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const grid = ticks.map((v) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+    <text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${esc(fmtNum(v))}</text>`).join('');
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+  const last = points[points.length - 1];
+  const dots = points.map((p, i) => {
+    const label = `<b>${esc(shortDate(p.date))}</b> · ${esc(fmtNum(p.v))} ${unit}${p.detail ? ` <span class="muted">(${esc(p.detail)})</span>` : ''}${p.record ? ' 🏆' : ''}`;
+    return `<g><circle class="pt ${i === points.length - 1 ? 'sel' : ''} ${p.record ? 'rec' : ''}" cx="${x(p.date)}" cy="${y(p.v)}" r="4.5"/>
+      <circle class="hit" cx="${x(p.date)}" cy="${y(p.v)}" r="16" data-act="chart-pt" data-label="${esc(label)}"/></g>`;
+  }).join('');
+  const xl = `<text class="axis" x="${L}" y="${H - 6}" text-anchor="start">${esc(shortDate(points[0].date))}</text>
+    <text class="axis" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(shortDate(last.date))}</text>`;
+  const lastLabel = `<b>${esc(shortDate(last.date))}</b> · ${esc(fmtNum(last.v))} ${unit}${last.detail ? ` <span class="muted">(${esc(last.detail)})</span>` : ''}${last.record ? ' 🏆' : ''}`;
+  return `<div class="chart-readout" id="chart-readout">${lastLabel}</div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfica de progreso">${grid}<path class="line" d="${path}"/>${dots}${xl}</svg>
+    <p class="muted small" style="text-align:center;margin:4px 0 0">Toca un punto para ver su valor. 🏆 = récord</p>`;
+}
+
+function openProgress(exId, metric) {
+  const ex = exById(exId);
+  if (!ex) return;
+  const hist = exerciseHistory(exId);
+  const bodyweight = hist.length > 0 && hist.every((h) => h.top.w === 0);
+  const metrics = bodyweight
+    ? [['reps', 'Máx. repeticiones'], ['totalReps', 'Repeticiones totales']]
+    : [['peso', 'Peso máximo'], ['volumen', 'Volumen']];
+  if (!metric || !metrics.some((m) => m[0] === metric)) metric = metrics[0][0];
+
+  let body = '';
+  if (!hist.length) {
+    body = `<p class="muted">Todavía no has registrado este ejercicio. Cuando lo hagas, aquí verás tu evolución y tus récords.</p>`;
+  } else {
+    const best = hist.reduce((b, h) => (better(h.top, b.top) ? h : b), hist[0]);
+    const first = hist[0], last = hist[hist.length - 1];
+    let change = '';
+    if (hist.length > 1) {
+      const dv = bodyweight ? last.maxReps - first.maxReps : last.top.w - first.top.w;
+      const sign = dv > 0 ? '+' : dv < 0 ? '−' : '';
+      change = `${sign}${fmtNum(Math.abs(dv))} ${bodyweight ? 'reps' : 'kg'}`;
+    }
+    const tiles = `
+      <div class="tiles">
+        <div class="tile"><span>Récord</span><b>${bodyweight ? `${best.top.r} reps` : `${fmtNum(best.top.w)} kg × ${best.top.r}`}</b><em>${esc(shortDate(best.date))}</em></div>
+        <div class="tile"><span>Sesiones</span><b>${hist.length}</b><em>desde ${esc(shortDate(first.date))}</em></div>
+        <div class="tile"><span>Evolución</span><b>${change || '—'}</b><em>${hist.length > 1 ? 'desde la 1.ª vez' : 'falta otra sesión'}</em></div>
+      </div>`;
+    const toggle = `<div class="seg">${metrics.map(([id, name]) =>
+      `<button class="${id === metric ? 'on' : ''}" data-act="progress-metric" data-ex="${exId}" data-metric="${id}">${name}</button>`).join('')}</div>`;
+    const pts = hist.map((h) => {
+      if (metric === 'peso') return { date: h.date, v: h.top.w, detail: `× ${h.top.r}`, record: h.record };
+      if (metric === 'volumen') return { date: h.date, v: Math.round(h.volume), detail: `${h.sets.length} series`, record: h.record };
+      if (metric === 'reps') return { date: h.date, v: h.maxReps, detail: '', record: h.record };
+      return { date: h.date, v: h.totalReps, detail: `${h.sets.length} series`, record: h.record };
+    });
+    const unit = metric === 'peso' || metric === 'volumen' ? 'kg' : 'reps';
+    const chart = hist.length < 2
+      ? `<p class="muted small chart-empty">Con una sesión más aparecerá aquí la gráfica de tu evolución.</p>`
+      : renderChart(pts, unit, exId);
+    const explain = metric === 'volumen'
+      ? '<p class="muted small">Volumen = suma de peso × repeticiones de todas las series del día.</p>' : '';
+    const list = hist.slice().reverse().map((h) => `
+      <div class="hist-row ${h.record ? 'rec' : ''}">
+        <div><b>${esc(cap(relDay(h.date)))}</b>${relDay(h.date) !== shortDate(h.date) ? ` <span class="muted small">${esc(shortDate(h.date))}</span>` : ''}${h.record ? ' <span class="pr">🏆 Récord</span>' : ''}</div>
+        <div class="muted small">${esc(fmtSets(h.sets))}</div>
+      </div>`).join('');
+    body = tiles + toggle + chart + explain + `<h2>Historial</h2><div class="card">${list}</div>`;
+  }
+  openSheet(`
+    <div class="eyebrow-s">${esc(groupById(ex.groupId)?.name || '')} · Progreso</div>
+    <h2 style="margin-top:2px">${esc(ex.name)}</h2>
+    ${body}
+  `);
+}
+
+/* ---------------- Temporizador de descanso ---------------- */
+
+const REST_OPTS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
+const fmtTime = (sec) => `${Math.floor(sec / 60)}:${pad(sec % 60)}`;
+const rest = { end: 0, total: 0, timer: null, hideTimer: null };
+let audioCtx = null;
+
+function unlockAudio() {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) { /* sin sonido */ }
+}
+
+function beep() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  [0, 0.25, 0.5].forEach((dt, i) => {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.frequency.value = i === 2 ? 1320 : 880;
+    g.gain.setValueAtTime(0.0001, t + dt);
+    g.gain.exponentialRampToValueAtTime(0.4, t + dt + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.18);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t + dt); o.stop(t + dt + 0.2);
+  });
+}
+
+function startRest() {
+  const sec = data.settings.restSeconds;
+  if (!sec) return;
+  rest.total = sec;
+  rest.end = Date.now() + sec * 1000;
+  clearTimeout(rest.hideTimer);
+  $('#rest').classList.remove('finished');
+  $('#rest').hidden = false;
+  clearInterval(rest.timer);
+  rest.timer = setInterval(tickRest, 250);
+  tickRest();
+}
+
+function addRest(d) {
+  if (!rest.timer) return;
+  rest.end += d * 1000;
+  rest.total = Math.max(rest.total + d, 1);
+  tickRest();
+}
+
+function stopRest() {
+  clearInterval(rest.timer); rest.timer = null;
+  clearTimeout(rest.hideTimer);
+  $('#rest').hidden = true;
+}
+
+function tickRest() {
+  const left = Math.max(0, Math.ceil((rest.end - Date.now()) / 1000));
+  $('#rest-time').textContent = fmtTime(left);
+  $('#rest-fill').style.width = `${Math.min(100, (1 - left / rest.total) * 100)}%`;
+  if (left <= 0) {
+    clearInterval(rest.timer); rest.timer = null;
+    const el = $('#rest');
+    el.classList.add('finished');
+    $('#rest-time').textContent = '¡Siguiente serie!';
+    if (document.visibilityState === 'visible') { beep(); vibrate([200, 100, 200]); }
+    rest.hideTimer = setTimeout(() => { el.hidden = true; el.classList.remove('finished'); }, 5000);
+  }
+}
 
 /* ---------------- Cuenta ---------------- */
 
