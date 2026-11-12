@@ -474,7 +474,7 @@ function renderSettings() {
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v3</p>
+    <p class="muted small" style="text-align:center">Gym · v4</p>
   `;
 }
 
@@ -762,7 +762,7 @@ document.addEventListener('focusin', (ev) => {
 document.addEventListener('submit', (ev) => {
   const form = ev.target;
   ev.preventDefault();
-  if (form.dataset.act === 'auth-form') { doAuth(form, 'in'); return; }
+  if (form.dataset.act === 'auth-form') { doAuth(form); return; }
   const name = form.elements.name.value;
   const act = form.dataset.act;
   if (act === 'add-ex-form') {
@@ -816,21 +816,39 @@ document.addEventListener('visibilitychange', () => {
 /* ---------------- Cuenta ---------------- */
 
 function renderLogin() {
+  const email = esc(ui.authEmail || '');
+  if (ui.authView === 'signup') {
+    return `
+      <button class="back" data-act="auth-view" data-view="login">‹ Iniciar sesión</button>
+      <div class="header"><div class="eyebrow">Nueva cuenta</div><h1>Crear cuenta</h1></div>
+      <p class="muted">Tus entrenos se guardarán en tu cuenta y podrás verlos en cualquier dispositivo.</p>
+      <form class="stack" data-act="auth-form" data-mode="up" novalidate>
+        <label class="field-label" for="f-email">Correo electrónico</label>
+        <input class="text-input block" id="f-email" name="email" type="email" value="${email}" placeholder="tucorreo@gmail.com" autocomplete="email" autocapitalize="off" spellcheck="false">
+        <label class="field-label" for="f-pw">Contraseña</label>
+        <input class="text-input block" id="f-pw" name="password" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+        <label class="field-label" for="f-pw2">Repetir contraseña</label>
+        <input class="text-input block" id="f-pw2" name="password2" type="password" placeholder="Vuelve a escribirla" autocomplete="new-password">
+        <p class="auth-error" id="auth-error" hidden></p>
+        <button class="btn" type="submit">Crear cuenta</button>
+      </form>`;
+  }
   return `
-    <div class="header"><div class="eyebrow">Bienvenido</div><h1>Gym</h1></div>
-    <p class="muted">Inicia sesión para guardar tus entrenos en la nube y verlos en cualquier dispositivo.</p>
-    <form class="stack" data-act="auth-form" novalidate>
-      <input class="text-input block" name="email" type="email" placeholder="Email" autocomplete="email" autocapitalize="off" required>
-      <input class="text-input block" name="password" type="password" placeholder="Contraseña (mínimo 6 caracteres)" autocomplete="current-password" required>
+    <div class="header"><div class="eyebrow">Bienvenido</div><h1>Iniciar sesión</h1></div>
+    <p class="muted">Entra en tu cuenta para ver tus entrenos en cualquier dispositivo.</p>
+    <form class="stack" data-act="auth-form" data-mode="in" novalidate>
+      <label class="field-label" for="f-email">Correo electrónico</label>
+      <input class="text-input block" id="f-email" name="email" type="email" value="${email}" placeholder="tucorreo@gmail.com" autocomplete="email" autocapitalize="off" spellcheck="false">
+      <label class="field-label" for="f-pw">Contraseña</label>
+      <input class="text-input block" id="f-pw" name="password" type="password" placeholder="Tu contraseña" autocomplete="current-password">
       <p class="auth-error" id="auth-error" hidden></p>
       <button class="btn" type="submit">Entrar</button>
-      <button class="btn secondary" type="button" data-act="signup">Crear cuenta</button>
+      <div style="text-align:center"><button type="button" class="link" data-act="reset-pw">¿Has olvidado la contraseña?</button></div>
     </form>
+    <div class="divider"><span>¿No tienes cuenta?</span></div>
+    <button class="btn secondary" data-act="auth-view" data-view="signup">Crear cuenta</button>
     <div class="spacer"></div>
-    <div class="stack" style="text-align:center">
-      <button class="link" data-act="reset-pw">¿Has olvidado la contraseña?</button>
-      <br><button class="link muted-link" data-act="use-local">Usar sin cuenta (solo en este dispositivo)</button>
-    </div>`;
+    <div style="text-align:center"><button class="link muted-link small" data-act="use-local">Usar sin cuenta (solo en este dispositivo)</button></div>`;
 }
 
 function renderAccount() {
@@ -854,27 +872,40 @@ function authError(msg) {
   el.textContent = msg; el.hidden = !msg;
 }
 
-async function doAuth(form, mode) {
+async function doAuth(form) {
+  const mode = form.dataset.mode;
   const email = form.elements.email.value.trim();
   const pw = form.elements.password.value;
-  if (!email || !pw) { authError('Escribe tu email y tu contraseña.'); return; }
+  ui.authEmail = email;
+  if (!email) { authError('Escribe tu correo electrónico.'); return; }
+  if (!pw) { authError('Escribe tu contraseña.'); return; }
+  if (mode === 'up') {
+    if (pw.length < 6) { authError('La contraseña debe tener al menos 6 caracteres.'); return; }
+    if (pw !== form.elements.password2.value) { authError('Las contraseñas no coinciden.'); return; }
+  }
   authError('');
-  form.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  const buttons = form.querySelectorAll('button');
+  buttons.forEach((b) => { b.disabled = true; });
   try {
     if (mode === 'up') await cloud.signUp(email, pw);
     else await cloud.signIn(email, pw);
   } catch (e) {
-    authError(cloud.errorText(e));
-    form.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    authError(cloud.errorText(e, mode));
+    buttons.forEach((b) => { b.disabled = false; });
   }
 }
 
 Object.assign(actions, {
-  signup(el) { doAuth(el.closest('form'), 'up'); },
+  'auth-view'(el) {
+    const input = $('input[name=email]');
+    if (input) ui.authEmail = input.value.trim();
+    ui.authView = el.dataset.view;
+    render(); window.scrollTo(0, 0);
+  },
   async 'reset-pw'() {
-    const email = ($('input[name=email]') || {}).value || prompt('Tu email');
-    if (!email) { authError('Escribe tu email arriba y vuelve a pulsar.'); return; }
-    try { await cloud.resetPassword(email.trim()); toast('Te hemos enviado un email para cambiarla'); }
+    const email = ($('input[name=email]') || {}).value;
+    if (!email) { authError('Escribe tu correo arriba y vuelve a pulsar aquí.'); return; }
+    try { await cloud.resetPassword(email.trim()); toast('Te hemos enviado un correo para cambiar la contraseña'); }
     catch (e) { authError(cloud.errorText(e)); }
   },
   'use-local'() { localStorage.setItem(MODE_KEY, 'local'); render(); },

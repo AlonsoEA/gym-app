@@ -41,18 +41,22 @@ export async function logOut() {
   await fb.signOut(auth);
 }
 
-export function errorText(e) {
+export function errorText(e, mode = 'in') {
   const code = (e && e.code) || '';
+  if (mode === 'in') {
+    if (code === 'auth/user-not-found') return 'Este correo no está registrado. Pulsa "Crear cuenta" para registrarte.';
+    if (code === 'auth/wrong-password') return 'La contraseña no es correcta.';
+    if (code === 'auth/invalid-credential' || code === 'auth/invalid-login-credentials')
+      return 'Correo o contraseña incorrectos. Si aún no tienes cuenta, pulsa "Crear cuenta".';
+  }
   const map = {
-    'auth/invalid-email': 'El email no es válido.',
-    'auth/missing-password': 'Escribe la contraseña.',
+    'auth/invalid-email': 'El correo electrónico no es válido.',
+    'auth/missing-password': 'Escribe tu contraseña.',
     'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres.',
-    'auth/email-already-in-use': 'Ya existe una cuenta con ese email. Pulsa "Entrar".',
-    'auth/invalid-credential': 'Email o contraseña incorrectos.',
-    'auth/wrong-password': 'Email o contraseña incorrectos.',
-    'auth/user-not-found': 'No hay ninguna cuenta con ese email.',
+    'auth/email-already-in-use': 'Este correo ya tiene una cuenta. Vuelve atrás e inicia sesión.',
     'auth/too-many-requests': 'Demasiados intentos. Espera un poco y vuelve a probar.',
     'auth/network-request-failed': 'Sin conexión. Inténtalo cuando tengas internet.',
+    'auth/user-not-found': 'Este correo no está registrado.',
   };
   return map[code] || 'Ha ocurrido un error. Inténtalo de nuevo.';
 }
