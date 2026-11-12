@@ -461,7 +461,9 @@ function renderSettings() {
     </div>
 
     <h2>Copia de seguridad</h2>
-    <p class="muted small">Tus datos solo están en este iPhone. Exporta una copia de vez en cuando (por ejemplo a Archivos o iCloud Drive) para no perderlos nunca.</p>
+    <p class="muted small">${ui.user
+      ? 'Tus datos ya se guardan en tu cuenta. Si quieres, también puedes guardar una copia en un archivo (por ejemplo en Archivos o iCloud Drive).'
+      : 'Tus datos solo están en este dispositivo. Exporta una copia de vez en cuando (por ejemplo a Archivos o iCloud Drive) para no perderlos nunca.'}</p>
     <div class="stack">
       <button class="btn" data-act="export">Exportar copia</button>
       <button class="btn secondary" data-act="import">Importar copia</button>
@@ -474,7 +476,7 @@ function renderSettings() {
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v4</p>
+    <p class="muted small" style="text-align:center">Gym · v5</p>
   `;
 }
 
