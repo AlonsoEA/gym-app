@@ -27,6 +27,11 @@ html, body {
 
 body { overscroll-behavior-y: none; }
 
+/* iOS (app en pantalla de inicio): si la página no tiene scroll, Safari sube los elementos
+   fijos de abajo la altura de la barra de estado. Con esto la página siempre ocupa
+   la pantalla completa y la barra de pestañas se queda pegada abajo en todas las pantallas. */
+html { min-height: calc(100% + env(safe-area-inset-top, 0px)); }
+
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; border: 0; background: none; padding: 0; }
 

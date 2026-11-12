@@ -474,7 +474,7 @@ function renderSettings() {
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v2</p>
+    <p class="muted small" style="text-align:center">Gym · v3</p>
   `;
 }
 
