@@ -1,6 +1,6 @@
 // Sube este número cada vez que cambies la app para que el iPhone descargue la versión nueva.
-const CACHE = 'gym-v1';
-const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.json', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'gym-v2';
+const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.json', 'sync.js', 'firebase-config.js', 'vendor/firebase.js', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

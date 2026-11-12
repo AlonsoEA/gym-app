@@ -1,4 +1,6 @@
-'use strict';
+import * as cloud from './sync.js';
+
+const MODE_KEY = 'gymapp.mode'; // 'local' si el usuario elige usar la app sin cuenta
 
 /* =========================================================
    Gym — registro de entrenamientos
@@ -51,6 +53,36 @@ let data = load();
 function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
   catch (e) { toast('No se ha podido guardar'); }
+  cloud.queuePush();
+}
+
+const hasOwnContent = (d) => d.exercises.length > 0 || Object.keys(d.workouts).length > 0;
+
+// Añade los datos de este dispositivo a los de la cuenta, emparejando grupos y ejercicios por nombre.
+function mergeLocalInto(base, local) {
+  const norm = (s) => s.trim().toLowerCase();
+  const gMap = {};
+  for (const g of local.groups) {
+    let t = base.groups.find((x) => norm(x.name) === norm(g.name));
+    if (!t) { t = { id: g.id, name: g.name }; base.groups.push(t); }
+    gMap[g.id] = t.id;
+  }
+  const eMap = {};
+  for (const e of local.exercises) {
+    const groupId = gMap[e.groupId] || e.groupId;
+    let t = base.exercises.find((x) => x.groupId === groupId && norm(x.name) === norm(e.name));
+    if (!t) { t = { ...e, groupId }; base.exercises.push(t); }
+    eMap[e.id] = t.id;
+  }
+  for (const [k, w] of Object.entries(local.workouts)) {
+    const entries = w.entries.map((en) => ({ ...en, exerciseId: eMap[en.exerciseId] || en.exerciseId }));
+    const groups = w.groups.map((g) => gMap[g] || g);
+    const target = base.workouts[k];
+    if (!target) { base.workouts[k] = { groups, entries }; continue; }
+    target.groups = [...new Set([...target.groups, ...groups])];
+    for (const en of entries) if (!target.entries.some((x) => x.exerciseId === en.exerciseId)) target.entries.push(en);
+  }
+  return base;
 }
 
 /* ---------------- Fechas ---------------- */
@@ -188,7 +220,13 @@ const ui = {
 function render() {
   const y = window.scrollY;
   let html = '';
-  if (ui.tab === 'today') html = renderWorkout(todayKey(), false);
+  const localMode = localStorage.getItem(MODE_KEY) === 'local';
+  const needLogin = cloud.cloudEnabled && ui.authReady && !ui.user && !localMode;
+  const waiting = ui.syncing || (cloud.cloudEnabled && !ui.authReady && !data.owner && !localMode);
+  $('#tabbar').hidden = needLogin || waiting;
+  if (waiting) html = `<div class="header"><div class="eyebrow">Gym</div><h1>Cargando tus datos…</h1></div>`;
+  else if (needLogin) html = renderLogin();
+  else if (ui.tab === 'today') html = renderWorkout(todayKey(), false);
   else if (ui.tab === 'calendar') html = ui.dayKey ? renderWorkout(ui.dayKey, true) : renderCalendar();
   else if (ui.tab === 'exercises') html = renderExercises();
   else if (ui.tab === 'settings') html = renderSettings();
@@ -431,10 +469,12 @@ function renderSettings() {
     </div>
     <p class="muted small">${nWorkouts} ${nWorkouts === 1 ? 'entreno' : 'entrenos'} y ${nEx} ${nEx === 1 ? 'ejercicio' : 'ejercicios'} guardados.</p>
 
+    ${renderAccount()}
+
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v1</p>
+    <p class="muted small" style="text-align:center">Gym · v2</p>
   `;
 }
 
@@ -686,7 +726,9 @@ const actions = {
   reset() {
     if (!confirm('Se borrarán TODOS tus entrenos y ejercicios. ¿Seguro?')) return;
     if (!confirm('Última confirmación: esto no se puede deshacer.')) return;
-    data = freshData(); save(); render();
+    data = freshData();
+    if (ui.user) data.owner = ui.user.uid;
+    save(); render();
     toast('Datos borrados');
   },
 
@@ -720,6 +762,7 @@ document.addEventListener('focusin', (ev) => {
 document.addEventListener('submit', (ev) => {
   const form = ev.target;
   ev.preventDefault();
+  if (form.dataset.act === 'auth-form') { doAuth(form, 'in'); return; }
   const name = form.elements.name.value;
   const act = form.dataset.act;
   if (act === 'add-ex-form') {
@@ -747,7 +790,10 @@ document.addEventListener('change', async (ev) => {
     const parsed = JSON.parse(await file.text());
     if (!parsed || !Array.isArray(parsed.groups) || typeof parsed.workouts !== 'object') throw new Error('formato');
     if (!confirm('Esto sustituirá los datos actuales por los de la copia. ¿Seguir?')) return;
-    data = normalize(parsed); save(); render();
+    const owner = data.owner;
+    data = normalize(parsed);
+    if (owner) data.owner = owner; else delete data.owner;
+    save(); render();
     toast('Copia importada');
   } catch (e) {
     toast('Ese archivo no es una copia válida');
@@ -759,12 +805,148 @@ document.addEventListener('change', async (ev) => {
 // Si la app se queda abierta y cambia el día, refrescar al volver.
 let lastSeenDay = todayKey();
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') cloud.flush();
   if (document.visibilityState === 'visible' && todayKey() !== lastSeenDay) {
     lastSeenDay = todayKey();
     ui.calSel = lastSeenDay;
     render();
   }
 });
+
+/* ---------------- Cuenta ---------------- */
+
+function renderLogin() {
+  return `
+    <div class="header"><div class="eyebrow">Bienvenido</div><h1>Gym</h1></div>
+    <p class="muted">Inicia sesión para guardar tus entrenos en la nube y verlos en cualquier dispositivo.</p>
+    <form class="stack" data-act="auth-form" novalidate>
+      <input class="text-input block" name="email" type="email" placeholder="Email" autocomplete="email" autocapitalize="off" required>
+      <input class="text-input block" name="password" type="password" placeholder="Contraseña (mínimo 6 caracteres)" autocomplete="current-password" required>
+      <p class="auth-error" id="auth-error" hidden></p>
+      <button class="btn" type="submit">Entrar</button>
+      <button class="btn secondary" type="button" data-act="signup">Crear cuenta</button>
+    </form>
+    <div class="spacer"></div>
+    <div class="stack" style="text-align:center">
+      <button class="link" data-act="reset-pw">¿Has olvidado la contraseña?</button>
+      <br><button class="link muted-link" data-act="use-local">Usar sin cuenta (solo en este dispositivo)</button>
+    </div>`;
+}
+
+function renderAccount() {
+  if (!cloud.cloudEnabled) return '';
+  if (ui.user) {
+    return `
+      <h2>Cuenta</h2>
+      <div class="list"><div class="list-item"><div class="grow">${esc(ui.user.email)}<div class="sub">Sincronizado en la nube</div></div></div></div>
+      <div class="spacer"></div>
+      <button class="btn secondary" data-act="logout">Cerrar sesión</button>`;
+  }
+  return `
+    <h2>Cuenta</h2>
+    <p class="muted small">Ahora mismo tus datos solo están en este dispositivo. Inicia sesión para sincronizarlos.</p>
+    <button class="btn secondary" data-act="go-login">Iniciar sesión</button>`;
+}
+
+function authError(msg) {
+  const el = $('#auth-error');
+  if (!el) { toast(msg); return; }
+  el.textContent = msg; el.hidden = !msg;
+}
+
+async function doAuth(form, mode) {
+  const email = form.elements.email.value.trim();
+  const pw = form.elements.password.value;
+  if (!email || !pw) { authError('Escribe tu email y tu contraseña.'); return; }
+  authError('');
+  form.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    if (mode === 'up') await cloud.signUp(email, pw);
+    else await cloud.signIn(email, pw);
+  } catch (e) {
+    authError(cloud.errorText(e));
+    form.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  }
+}
+
+Object.assign(actions, {
+  signup(el) { doAuth(el.closest('form'), 'up'); },
+  async 'reset-pw'() {
+    const email = ($('input[name=email]') || {}).value || prompt('Tu email');
+    if (!email) { authError('Escribe tu email arriba y vuelve a pulsar.'); return; }
+    try { await cloud.resetPassword(email.trim()); toast('Te hemos enviado un email para cambiarla'); }
+    catch (e) { authError(cloud.errorText(e)); }
+  },
+  'use-local'() { localStorage.setItem(MODE_KEY, 'local'); render(); },
+  'go-login'() { localStorage.removeItem(MODE_KEY); render(); window.scrollTo(0, 0); },
+  async logout() {
+    if (!confirm('¿Cerrar sesión? Tus datos seguirán guardados en tu cuenta.')) return;
+    await cloud.logOut();
+  },
+});
+
+function startLiveSync(uid) {
+  cloud.startSync(uid, () => data, () => {
+    const typing = document.activeElement && document.activeElement.matches('input');
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {}
+    if (!typing && !ui.syncing) render();
+  });
+}
+
+async function onUser(user) {
+  ui.authReady = true;
+  if (user && data.owner === user.uid) {
+    // Ya teníamos sus datos en este dispositivo: arrancar al instante y sincronizar en segundo plano.
+    ui.user = user;
+    startLiveSync(user.uid);
+    render();
+    return;
+  }
+  if (!user) {
+    cloud.stopSync();
+    if (ui.user) {
+      // Al cerrar sesión, este dispositivo se queda limpio.
+      data = freshData();
+      save();
+    }
+    ui.user = null;
+    render();
+    return;
+  }
+  ui.user = user;
+  ui.syncing = true;
+  render();
+  try {
+    const remote = await cloud.loadAll(user.uid);
+    const local = data;
+    const localIsOther = local.owner && local.owner !== user.uid;
+    if (!remote) {
+      // Cuenta nueva: se suben los datos de este dispositivo (si eran de esta persona o de nadie).
+      data = localIsOther ? freshData() : local;
+      data.owner = user.uid;
+      await cloud.uploadAll(user.uid, data);
+      if (!localIsOther && hasOwnContent(local)) toast('Tus datos se han subido a tu cuenta');
+    } else {
+      let merged = normalize(remote);
+      if (!local.owner && hasOwnContent(local) &&
+          confirm('Este dispositivo tiene entrenos que no están en tu cuenta. ¿Quieres añadirlos?')) {
+        merged = mergeLocalInto(merged, local);
+        await cloud.uploadAll(user.uid, merged);
+      }
+      data = merged;
+      data.owner = user.uid;
+    }
+    localStorage.removeItem(MODE_KEY);
+    save();
+    startLiveSync(user.uid);
+  } catch (e) {
+    console.error(e);
+    toast('No se han podido cargar tus datos. Revisa la conexión.');
+  } finally {
+    ui.syncing = false;
+    render();
+  }
+}
 
 /* ---------------- Arranque ---------------- */
 
@@ -773,3 +955,4 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 render();
+cloud.initCloud(onUser).catch((e) => { console.error(e); ui.authReady = true; render(); });
