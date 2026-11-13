@@ -25,7 +25,7 @@ function freshData() {
     groups: DEFAULT_GROUPS.map((name) => ({ id: uid(), name })),
     exercises: [],          // { id, groupId, name, archived }
     workouts: {},           // 'YYYY-MM-DD' -> { groups: [groupId], entries: [{ id, exerciseId, sets: [{ w, r, done }] }] }
-    settings: { defaultSets: 4, weightStep: 2.5, restEnabled: true, restSeconds: 90 },
+    settings: { defaultSets: 4, weightStep: 2.5, restEnabled: true, restSeconds: 90, restSilent: true },
   };
 }
 
@@ -476,6 +476,14 @@ function renderSettings() {
           <input value="${fmtTime(data.settings.restSeconds)}" readonly>
           <button data-act="setting-step" data-key="restSeconds" data-d="1">+</button>
         </div>
+      </div>
+      <div class="setting">
+        <div>Sonar aunque esté en silencio<div class="sub">La alarma pausa la música mientras suena</div></div>
+        <button class="switch ${data.settings.restSilent ? 'on' : ''}" role="switch" aria-checked="${data.settings.restSilent}" data-act="toggle-rest-silent" aria-label="Sonar aunque esté en silencio"><i></i></button>
+      </div>
+      <div class="setting">
+        <div>Probar la alarma<div class="sub">Para comprobar el volumen</div></div>
+        <button class="pill-btn" data-act="test-alarm">${alarm ? 'Parar' : 'Probar'}</button>
       </div>` : ''}
     </div>
 
@@ -495,7 +503,7 @@ function renderSettings() {
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v7</p>
+    <p class="muted small" style="text-align:center">Gym · v8</p>
   `;
 }
 
@@ -681,6 +689,17 @@ const actions = {
   },
   'rest-add'(el) { addRest(Number(el.dataset.d)); },
   'rest-stop'() { stopRest(); },
+  'toggle-rest-silent'() {
+    data.settings.restSilent = !data.settings.restSilent;
+    save(); render(); vibrate();
+  },
+  'test-alarm'(el) {
+    if (alarm) { stopAlarm(); el.textContent = 'Probar'; return; }
+    unlockAudio(); playAlarm(); el.textContent = 'Parar';
+    const prev = alarm;
+    setTimeout(() => { if (alarm !== prev || !alarm) { const b = $('[data-act=test-alarm]'); if (b) b.textContent = 'Probar'; } }, ALARM_SECONDS * 1000 + 400);
+  },
+  'rest-tap'() { if ($('#rest').classList.contains('finished')) stopRest(); },
   'toggle-rest'() {
     data.settings.restEnabled = !data.settings.restEnabled;
     if (!data.settings.restEnabled) stopRest();
@@ -1020,22 +1039,61 @@ function unlockAudio() {
   try {
     audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
+    // iOS necesita reproducir algo dentro de un toque para "desbloquear" el audio.
+    const b = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = b; src.connect(audioCtx.destination); src.start(0);
   } catch (e) { /* sin sonido */ }
 }
 
-function beep() {
+const ALARM_SECONDS = 10;
+let alarm = null;
+
+function setAudioSession(type) {
+  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) {}
+}
+
+// Alarma tipo despertador: ráfagas de 4 pitidos fuertes cada segundo, durante 10 s.
+function playAlarm() {
   if (!audioCtx) return;
-  const t = audioCtx.currentTime;
-  [0, 0.25, 0.5].forEach((dt, i) => {
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.frequency.value = i === 2 ? 1320 : 880;
-    g.gain.setValueAtTime(0.0001, t + dt);
-    g.gain.exponentialRampToValueAtTime(0.4, t + dt + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.18);
-    o.connect(g).connect(audioCtx.destination);
-    o.start(t + dt); o.stop(t + dt + 0.2);
-  });
+  stopAlarm();
+  if (data.settings.restSilent) setAudioSession('playback');
+  try { audioCtx.resume(); } catch (e) {}
+  const ctxA = audioCtx;
+  const out = ctxA.createDynamicsCompressor();
+  out.threshold.value = -6; out.knee.value = 0; out.ratio.value = 4;
+  const master = ctxA.createGain();
+  master.gain.value = 1;
+  out.connect(master).connect(ctxA.destination);
+  const oscs = [];
+  const t0 = ctxA.currentTime + 0.05;
+  for (let sec = 0; sec < ALARM_SECONDS; sec++) {
+    for (let k = 0; k < 4; k++) {
+      const t = t0 + sec + k * 0.13;
+      for (const [freq, type, vol] of [[2600, 'square', 0.35], [1300, 'sawtooth', 0.25]]) {
+        const o = ctxA.createOscillator();
+        const g = ctxA.createGain();
+        o.type = type; o.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+        g.gain.setValueAtTime(vol, t + 0.08);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.095);
+        o.connect(g).connect(out);
+        o.start(t); o.stop(t + 0.1);
+        oscs.push(o);
+      }
+    }
+  }
+  alarm = { oscs, master, timer: setTimeout(stopAlarm, ALARM_SECONDS * 1000 + 300) };
+}
+
+function stopAlarm() {
+  if (!alarm) return;
+  clearTimeout(alarm.timer);
+  try { alarm.master.gain.value = 0; } catch (e) {}
+  alarm.oscs.forEach((o) => { try { o.stop(); } catch (e) {} });
+  alarm = null;
+  setAudioSession('auto');
 }
 
 function startRest() {
@@ -1044,6 +1102,7 @@ function startRest() {
   rest.total = sec;
   rest.end = Date.now() + sec * 1000;
   clearTimeout(rest.hideTimer);
+  stopAlarm();
   $('#rest').classList.remove('finished');
   $('#rest').hidden = false;
   clearInterval(rest.timer);
@@ -1059,6 +1118,7 @@ function addRest(d) {
 }
 
 function stopRest() {
+  stopAlarm();
   clearInterval(rest.timer); rest.timer = null;
   clearTimeout(rest.hideTimer);
   $('#rest').hidden = true;
@@ -1073,8 +1133,8 @@ function tickRest() {
     const el = $('#rest');
     el.classList.add('finished');
     $('#rest-time').textContent = '¡Siguiente serie!';
-    if (document.visibilityState === 'visible') { beep(); vibrate([200, 100, 200]); }
-    rest.hideTimer = setTimeout(() => { el.hidden = true; el.classList.remove('finished'); }, 5000);
+    if (document.visibilityState === 'visible') { playAlarm(); vibrate([200, 100, 200]); }
+    rest.hideTimer = setTimeout(() => { el.hidden = true; el.classList.remove('finished'); }, ALARM_SECONDS * 1000);
   }
 }
 
