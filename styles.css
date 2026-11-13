@@ -316,3 +316,10 @@ h2 { font-size: 18px; margin: 26px 0 10px; }
 .toast { bottom: calc(var(--safe-bottom) + 140px); }
 main { padding-bottom: calc(var(--safe-bottom) + 160px); }
 .toast { left: 16px; right: 16px; transform: none; width: fit-content; max-width: calc(100vw - 32px); margin: 0 auto; }
+
+/* Interruptor estilo iOS */
+.switch { flex: none; width: 51px; height: 31px; border-radius: 999px; background: #3a3f4b; position: relative; transition: background .2s; }
+.switch i { position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+  box-shadow: 0 2px 4px rgba(0,0,0,.35); transition: transform .2s; }
+.switch.on { background: var(--accent); }
+.switch.on i { transform: translateX(20px); }

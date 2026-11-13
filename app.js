@@ -25,7 +25,7 @@ function freshData() {
     groups: DEFAULT_GROUPS.map((name) => ({ id: uid(), name })),
     exercises: [],          // { id, groupId, name, archived }
     workouts: {},           // 'YYYY-MM-DD' -> { groups: [groupId], entries: [{ id, exerciseId, sets: [{ w, r, done }] }] }
-    settings: { defaultSets: 4, weightStep: 2.5, restSeconds: 90 },
+    settings: { defaultSets: 4, weightStep: 2.5, restEnabled: true, restSeconds: 90 },
   };
 }
 
@@ -36,6 +36,8 @@ function normalize(d) {
   d.exercises = Array.isArray(d.exercises) ? d.exercises : [];
   d.workouts = d.workouts && typeof d.workouts === 'object' ? d.workouts : {};
   d.settings = Object.assign({}, f.settings, d.settings || {});
+  // Antes "0 segundos" significaba desactivado: ahora es el interruptor.
+  if (!d.settings.restSeconds) { d.settings.restEnabled = false; d.settings.restSeconds = 90; }
   d.version = 1;
   return d;
 }
@@ -458,14 +460,23 @@ function renderSettings() {
           <button data-act="setting-step" data-key="weightStep" data-d="1">+</button>
         </div>
       </div>
+    </div>
+
+    <h2>Descanso entre series</h2>
+    <div class="list">
       <div class="setting">
-        <div>Descanso entre series<div class="sub">Al marcar una serie como hecha</div></div>
+        <div>Temporizador de descanso<div class="sub">Arranca al marcar una serie como hecha</div></div>
+        <button class="switch ${data.settings.restEnabled ? 'on' : ''}" role="switch" aria-checked="${data.settings.restEnabled}" data-act="toggle-rest" aria-label="Temporizador de descanso"><i></i></button>
+      </div>
+      ${data.settings.restEnabled ? `
+      <div class="setting">
+        <div>Duración</div>
         <div class="stepper">
           <button data-act="setting-step" data-key="restSeconds" data-d="-1">−</button>
-          <input value="${data.settings.restSeconds ? fmtTime(data.settings.restSeconds) : 'No'}" readonly>
+          <input value="${fmtTime(data.settings.restSeconds)}" readonly>
           <button data-act="setting-step" data-key="restSeconds" data-d="1">+</button>
         </div>
-      </div>
+      </div>` : ''}
     </div>
 
     <h2>Copia de seguridad</h2>
@@ -484,7 +495,7 @@ function renderSettings() {
     <h2>Zona peligrosa</h2>
     <button class="btn danger" data-act="reset">Borrar todos los datos</button>
     <div class="spacer"></div>
-    <p class="muted small" style="text-align:center">Gym · v6</p>
+    <p class="muted small" style="text-align:center">Gym · v7</p>
   `;
 }
 
@@ -670,6 +681,11 @@ const actions = {
   },
   'rest-add'(el) { addRest(Number(el.dataset.d)); },
   'rest-stop'() { stopRest(); },
+  'toggle-rest'() {
+    data.settings.restEnabled = !data.settings.restEnabled;
+    if (!data.settings.restEnabled) stopRest();
+    save(); render(); vibrate();
+  },
 
   // Calendario
   'cal-prev'() { ui.calMonth = new Date(ui.calMonth.getFullYear(), ui.calMonth.getMonth() - 1, 1); render(); },
@@ -995,7 +1011,7 @@ function openProgress(exId, metric) {
 
 /* ---------------- Temporizador de descanso ---------------- */
 
-const REST_OPTS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
+const REST_OPTS = [30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${pad(sec % 60)}`;
 const rest = { end: 0, total: 0, timer: null, hideTimer: null };
 let audioCtx = null;
@@ -1024,7 +1040,7 @@ function beep() {
 
 function startRest() {
   const sec = data.settings.restSeconds;
-  if (!sec) return;
+  if (!data.settings.restEnabled || !sec) return;
   rest.total = sec;
   rest.end = Date.now() + sec * 1000;
   clearTimeout(rest.hideTimer);
